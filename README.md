@@ -9,6 +9,7 @@ Like tmux's activity monitoring, but designed for AI agent workflows -- you can 
 - **Running indicator** -- blue ● while the agent is processing
 - **Done indicator** -- green ● when the agent finishes or needs input
 - **Per-pane tracking** -- works with split panes; each pane tracked independently
+- **Workspace-level indicator** -- aggregated status per workspace, shown next to workspace names in tabline
 - **Auto-dismiss** -- dot clears when you focus the pane
 - **No text scanning** -- uses WezTerm user variables (OSC 1337), not terminal output parsing
 - **Works with mux** -- compatible with `wezterm connect` / `unix_domains`
@@ -20,6 +21,7 @@ Claude Code hooks / Shell hooks  -->  WezTerm Plugin (Lua)
   AI_RING=running (start/prompt)        user-var-changed -> pane_states
   AI_RING=done    (stop/notification)   update-status    -> scan + dismiss
                                         tabline component -> ● on tab
+                                        workspace component -> ● on workspace
 ```
 
 ### Status flow
@@ -83,16 +85,47 @@ function M.agent_status_component(tab)
   })
 end
 
+function M.get_workspace_indicator(workspace_name)
+  if not ai_ring_module then return "" end
+
+  local status = ai_ring_module.get_workspace_status(workspace_name)
+  if not status then return "" end
+
+  return wezterm.format({
+    { Foreground = { Color = status.color } },
+    { Text = status.icon },
+  })
+end
+
 return M
 ```
 
-Then use `agent_status_component` in your tabline config:
+Then use `agent_status_component` and `get_workspace_indicator` in your tabline config:
 
 ```lua
 local ai_ring = require("plugins.ai-ring")
 
+-- Custom workspace component with AI status indicators
+local function all_workspaces(window)
+  local active = window:active_workspace()
+  local names = wezterm.mux.get_workspace_names()
+  local parts = {}
+  for _, name in ipairs(names) do
+    if name ~= "default" then
+      local indicator = ai_ring.get_workspace_indicator(name)
+      local label = name == active and ("[" .. name .. "]") or name
+      if indicator ~= "" then
+        label = indicator .. " " .. label
+      end
+      table.insert(parts, label)
+    end
+  end
+  return table.concat(parts, " | ")
+end
+
 tabline.setup({
   sections = {
+    tabline_b = { all_workspaces },
     tab_active = {
       ai_ring.agent_status_component,
       "index",
@@ -238,6 +271,12 @@ Returns `nil` if no active indicators, or a table:
 ```
 
 `done` takes priority over `running` for the color.
+
+### `get_workspace_status(workspace_name)`
+
+Returns the aggregated status for all panes in a workspace. Same return format as `get_tab_status`.
+
+Scans all mux windows across all workspaces, so you can see the status of agents in workspaces you're not currently viewing.
 
 ## How dismissal works
 
