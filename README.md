@@ -217,6 +217,66 @@ Then add the following to your `~/.claude/settings.json`:
 | `Stop` | Claude finishes a response | `done` (green ●) |
 | `Notification` | Claude needs permission or input | `done` (green ●) |
 
+#### Background color + pane overlay (optional)
+
+Two scripts work together to give in-pane visual feedback:
+
+- **`wezterm-bg.sh`** — changes the pane background color via OSC 11. Survives TUI redraws because it operates at the terminal emulator level, not the character grid.
+- **`wezterm-overlay.sh`** — renders a `❓ WAITING` badge via tput. Used only for `Notification` (permission prompts), where Claude Code's TUI is paused so the badge stays visible.
+
+```
+[Stop]         → background turns green  ✅
+[Notification] → ❓ WAITING badge appears
+[SessionEnd]   → background resets to default
+```
+
+**Install:**
+
+```bash
+mkdir -p ~/.claude/hooks
+cp shell/wezterm-bg.sh ~/.claude/hooks/
+cp shell/wezterm-overlay.sh ~/.claude/hooks/
+cp shell/wezterm-bg.conf ~/.claude/hooks/       # optional — customize colors
+cp shell/wezterm-overlay.conf ~/.claude/hooks/  # optional — customize position
+chmod +x ~/.claude/hooks/wezterm-bg.sh ~/.claude/hooks/wezterm-overlay.sh
+```
+
+**Add to `~/.claude/settings.json`:**
+
+```json
+{
+  "hooks": {
+    "PreToolUse":       [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }],
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }],
+    "Stop":             [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh done" }] }],
+    "Notification":     [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-overlay.sh waiting" }] }],
+    "SessionEnd":       [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }]
+  }
+}
+```
+
+**Customize background color** in `~/.claude/hooks/wezterm-bg.conf`:
+
+```bash
+COLOR_DONE="#0d2b0d"   # background when agent finishes (default: dark green)
+```
+
+Any hex color works. Examples:
+
+| Color | Value |
+|---|---|
+| Dark green (default) | `#0d2b0d` |
+| Dark blue | `#0d1f2b` |
+| Dark amber | `#2b1a00` |
+
+**Customize overlay position** in `~/.claude/hooks/wezterm-overlay.conf`:
+
+```bash
+OVERLAY_ROW="bottom"    # top | bottom  (default: bottom)
+OVERLAY_COL="left"      # right | left  (default: left)
+OVERLAY_ROW_OFFSET=3    # lines from the edge (default: 3)
+```
+
 #### Shell hook (for OpenCode, Aider, etc.)
 
 For agents that don't support hooks, use the zsh shell hook. Add to your `.zshrc`:
