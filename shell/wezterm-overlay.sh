@@ -2,7 +2,7 @@
 # wezterm-overlay.sh - Show a status overlay in the WezTerm pane
 #
 # Usage:
-#   wezterm-overlay.sh waiting    # ❓ WAITING
+#   wezterm-overlay.sh waiting    # ❓ Waiting
 #
 # Designed to be called from Claude Code Notification hooks.
 # Works reliably because Claude Code's TUI halts while waiting for user input.
@@ -21,7 +21,7 @@
 ACTION="${1:-}"
 
 case "$ACTION" in
-  waiting)     MSG="❓ WAITING    " ;;
+  waiting)     MSG="❓ Waiting    " ;;
   in_progress) MSG="🚀 IN PROGRESS" ;;
   *)           exit 0 ;;
 esac
