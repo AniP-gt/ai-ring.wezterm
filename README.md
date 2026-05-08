@@ -7,9 +7,11 @@ Like tmux's activity monitoring, but designed for AI agent workflows -- you can 
 ## Features
 
 - **Running indicator** -- blue ● while the agent is processing
-- **Done indicator** -- green ● when the agent finishes or needs input
+- **Done indicator** -- green ● when the agent finishes
+- **Waiting indicator** -- blue ● when the agent needs input
 - **Per-pane tracking** -- works with split panes; each pane tracked independently
 - **Workspace-level indicator** -- aggregated status per workspace, shown next to workspace names in tabline
+- **Persistent state** -- records workspace/pane state in `~/.local/state/cc-glow/state.json`
 - **Auto-dismiss** -- dot clears when you focus the pane
 - **No text scanning** -- uses WezTerm user variables (OSC 1337), not terminal output parsing
 - **Works with mux** -- compatible with `wezterm connect` / `unix_domains`
@@ -19,7 +21,8 @@ Like tmux's activity monitoring, but designed for AI agent workflows -- you can 
 ```
 Claude Code hooks / Shell hooks  -->  WezTerm Plugin (Lua)
   AI_RING=running (start/prompt)        user-var-changed -> pane_states
-  AI_RING=done    (stop/notification)   update-status    -> scan + dismiss
+  AI_RING=done    (stop)                update-status    -> scan + dismiss
+  AI_RING=waiting (notification)        state.json       -> reload after config changes
                                         tabline component -> ● on tab
                                         workspace component -> ● on workspace
 ```
@@ -29,7 +32,8 @@ Claude Code hooks / Shell hooks  -->  WezTerm Plugin (Lua)
 | Event | Status | Tab indicator |
 |---|---|---|
 | Agent starts / user sends prompt | `running` | Blue ● |
-| Agent finishes / needs input | `done` | Green ● |
+| Agent finishes | `done` | Green ● |
+| Agent needs permission/input | `waiting` | Blue ● |
 | User focuses the pane | dismissed | Hidden |
 
 ## AI-assisted setup
@@ -66,8 +70,8 @@ Ask these questions one at a time and wait for answers:
 
 3. **Background color** (only ask if Claude Code): "Do you want the pane background to turn green when Claude finishes? (yes / no)"
 
-4. **Pane overlay** (only ask if Claude Code): "Do you want a 🚀 IN PROGRESS badge while Claude is working, and ❓ WAITING when it needs input? (yes / no)"
-   - If yes, ask: "Where should the badge appear? (top-left / top-right / bottom-left / bottom-right, default: bottom-left)"
+4. **Pane overlay** (only ask if Claude Code): "Do you want an in-pane colored dot while Claude is working, done, or waiting for input? (yes / no)"
+   - If yes, ask: "Where should the dot appear? (top-left / top-right / bottom-left / bottom-right, default: bottom-left)"
    - If yes, ask: "How many lines from the edge? (default: 3)"
 
 ### Step 2 — Check existing state
@@ -87,11 +91,14 @@ Before making any changes:
 ```bash
 mkdir -p ~/.claude/hooks
 cp <repo>/shell/ai-ring-hook.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/ai-ring-hook.sh
+cp <repo>/shell/cc-glow-state.py ~/.claude/hooks/
+cp <repo>/shell/cc-glow-state.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/ai-ring-hook.sh ~/.claude/hooks/cc-glow-state.sh ~/.claude/hooks/cc-glow-state.py
 ```
 Add to `~/.claude/settings.json` (merge with existing hooks, do not replace):
 - Always add: `SessionStart`, `UserPromptSubmit` → `ai-ring-hook.sh running`
-- Always add: `Stop`, `Notification` → `ai-ring-hook.sh done`
+- Add: `Stop` → `ai-ring-hook.sh done`
+- Add: `Notification` → `ai-ring-hook.sh waiting`
 
 **Background color (if chosen):**
 ```bash
@@ -113,6 +120,7 @@ chmod +x ~/.claude/hooks/wezterm-overlay.sh
 Edit `~/.claude/hooks/wezterm-overlay.conf` based on user's position preference.
 Add to `~/.claude/settings.json`:
 - `PreToolUse` → `wezterm-overlay.sh in_progress`
+- `Stop` → `wezterm-overlay.sh done`
 - `Notification` → `wezterm-overlay.sh waiting`
 
 **Shell hook (if chosen):**
@@ -177,6 +185,7 @@ function M.setup(config)
   ai_ring_module.apply_to_config(config, {
     indicator = "●",
     color_done = "#A6E22E",
+    color_waiting = "#66D9EF",
     color_running = "#66D9EF",
   })
 end
@@ -260,7 +269,9 @@ First, copy the hook script to `~/.claude/hooks/`:
 ```bash
 mkdir -p ~/.claude/hooks
 cp shell/ai-ring-hook.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/ai-ring-hook.sh
+cp shell/cc-glow-state.py ~/.claude/hooks/
+cp shell/cc-glow-state.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/ai-ring-hook.sh ~/.claude/hooks/cc-glow-state.sh ~/.claude/hooks/cc-glow-state.py
 ```
 
 Then add the following to your `~/.claude/settings.json`:
@@ -307,7 +318,7 @@ Then add the following to your `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/ai-ring-hook.sh done"
+            "command": "~/.claude/hooks/ai-ring-hook.sh waiting"
           }
         ]
       }
@@ -323,7 +334,11 @@ Then add the following to your `~/.claude/settings.json`:
 | `SessionStart` | Claude Code session begins | `running` (blue ●) |
 | `UserPromptSubmit` | You send a message | `running` (blue ●) |
 | `Stop` | Claude finishes a response | `done` (green ●) |
-| `Notification` | Claude needs permission or input | `done` (green ●) |
+| `Notification` | Claude needs permission or input | `waiting` (blue ●) |
+
+When `cc-glow-state.sh` is installed next to `ai-ring-hook.sh`, the hook also writes persistent state to `~/.local/state/cc-glow/state.json`. The plugin still reacts through `AI_RING` immediately, and `CC_GLOW_STATE_VERSION` tells it to reload the state file after each update.
+
+State entries are keyed by `workspace:pane_id` when the hook knows the workspace. If no workspace variable is available, the writer uses `unknown` and the WezTerm plugin falls back to matching the live pane id.
 
 #### tmux users
 
@@ -345,11 +360,11 @@ tmux source ~/.tmux.conf
 Two scripts work together to give in-pane visual feedback:
 
 - **`wezterm-bg.sh`** — changes the pane background color via OSC 11. Survives TUI redraws because it operates at the terminal emulator level, not the character grid.
-- **`wezterm-overlay.sh`** — renders a `❓ WAITING` badge via tput. Used only for `Notification` (permission prompts), where Claude Code's TUI is paused so the badge stays visible.
+- **`wezterm-overlay.sh`** — renders a small colored `●` via tput. `done` is green; `waiting` is blue.
 
 ```
-[Stop]         → background turns green  ✅
-[Notification] → ❓ WAITING badge appears
+[Stop]         → background turns green + green ● appears
+[Notification] → blue ● appears
 [SessionEnd]   → background resets to default
 ```
 
@@ -371,7 +386,7 @@ chmod +x ~/.claude/hooks/wezterm-bg.sh ~/.claude/hooks/wezterm-overlay.sh
   "hooks": {
     "PreToolUse":       [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }],
     "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }],
-    "Stop":             [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh done" }] }],
+    "Stop":             [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh done" }, { "type": "command", "command": "~/.claude/hooks/wezterm-overlay.sh done" }] }],
     "Notification":     [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-overlay.sh waiting" }] }],
     "SessionEnd":       [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/wezterm-bg.sh reset" }] }]
   }
@@ -392,12 +407,15 @@ Any hex color works. Examples:
 | Dark blue | `#0d1f2b` |
 | Dark amber | `#2b1a00` |
 
-**Customize overlay position** in `~/.claude/hooks/wezterm-overlay.conf`:
+**Customize overlay position and colors** in `~/.claude/hooks/wezterm-overlay.conf`:
 
 ```bash
 OVERLAY_ROW="bottom"    # top | bottom  (default: bottom)
 OVERLAY_COL="left"      # right | left  (default: left)
 OVERLAY_ROW_OFFSET=3    # lines from the edge (default: 3)
+COLOR_DONE="#A6E22E"        # done dot color
+COLOR_WAITING="#66D9EF"     # waiting dot color
+COLOR_IN_PROGRESS="#66D9EF" # in-progress dot color
 ```
 
 #### Shell hook (for OpenCode, Aider, etc.)
@@ -427,6 +445,7 @@ Claude Code hooks and the shell hook can coexist. The hooks provide more granula
 ai_ring.apply_to_config(config, {
   indicator = '●',           -- dot character (default: '●')
   color_done = '#A6E22E',    -- color when agent finished (default: '#A6E22E')
+  color_waiting = '#66D9EF', -- color when agent needs attention (default: '#66D9EF')
   color_running = '#66D9EF', -- color while agent is running (default: '#66D9EF')
   position = 'left',         -- 'left' or 'right' of tab title (default: 'left')
 })
@@ -448,12 +467,13 @@ Returns `nil` if no active indicators, or a table:
 {
   icon = '●',           -- the indicator character
   color = '#A6E22E',    -- the color to use
+  has_waiting = false,  -- at least one pane is "waiting"
   has_done = true,      -- at least one pane is "done"
   has_running = false,  -- at least one pane is "running"
 }
 ```
 
-`done` takes priority over `running` for the color.
+`waiting` takes priority over `done`, and `done` takes priority over `running` for the color.
 
 ### `get_workspace_status(workspace_name)`
 

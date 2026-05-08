@@ -10,10 +10,18 @@
 #   ai-ring-hook.sh running  # mark agent as running
 
 STATUS="${1:-done}"
+AGENT="${2:-claude}"
 PANE_ID="${WEZTERM_PANE:-}"
 
 if [ -z "$PANE_ID" ]; then
   exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_HOOK="$SCRIPT_DIR/cc-glow-state.sh"
+
+if [ -x "$STATE_HOOK" ]; then
+  exec "$STATE_HOOK" "$STATUS" "$AGENT"
 fi
 
 ENCODED=$(printf '%s' "$STATUS" | base64)
@@ -30,10 +38,12 @@ fi
 if [ -t 1 ]; then
   # stdout is a terminal
   printf '%s' "$OSC"
-elif [ -w /dev/tty ]; then
+elif [ -e /dev/tty ] && (printf '%s' "$OSC" > /dev/tty) 2>/dev/null; then
   # Write directly to controlling terminal
-  printf '%s' "$OSC" > /dev/tty
-else
+  exit 0
+elif command -v wezterm >/dev/null 2>&1 && printf '%s' "$INNER" | wezterm cli send-text --pane-id "$PANE_ID" --no-paste 2>/dev/null; then
   # Last resort: use wezterm cli send-text (IPC direct — no tmux wrapping needed)
-  printf '%s' "$INNER" | wezterm cli send-text --pane-id "$PANE_ID" --no-paste
+  exit 0
+else
+  printf '%s' "$INNER"
 fi

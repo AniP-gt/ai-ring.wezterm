@@ -1,8 +1,9 @@
 #!/bin/bash
-# wezterm-overlay.sh - Show a status overlay in the WezTerm pane
+# wezterm-overlay.sh - Show a status dot in the WezTerm pane
 #
 # Usage:
-#   wezterm-overlay.sh waiting    # ❓ Waiting
+#   wezterm-overlay.sh done       # green ●
+#   wezterm-overlay.sh waiting    # blue ●
 #
 # Designed to be called from Claude Code Notification hooks.
 # Works reliably because Claude Code's TUI halts while waiting for user input.
@@ -20,12 +21,6 @@
 
 ACTION="${1:-}"
 
-case "$ACTION" in
-  waiting)     MSG="❓ Waiting    " ;;
-  in_progress) MSG="🚀 IN PROGRESS" ;;
-  *)           exit 0 ;;
-esac
-
 [ -w /dev/tty ] || exit 0
 
 export TERM=xterm-256color
@@ -34,11 +29,31 @@ export TERM=xterm-256color
 OVERLAY_ROW="bottom"
 OVERLAY_COL="left"
 OVERLAY_ROW_OFFSET=3
+COLOR_DONE="#A6E22E"
+COLOR_WAITING="#66D9EF"
+COLOR_IN_PROGRESS="#66D9EF"
 CONF="$(dirname "$0")/wezterm-overlay.conf"
 # shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 
-MSG_LEN="${#MSG}"
+case "$ACTION" in
+  done)        COLOR="$COLOR_DONE" ;;
+  waiting)     COLOR="$COLOR_WAITING" ;;
+  in_progress) COLOR="$COLOR_IN_PROGRESS" ;;
+  *)           exit 0 ;;
+esac
+
+hex_to_rgb() {
+  local hex="${1#\#}"
+  if [ "${#hex}" -ne 6 ]; then
+    printf '255;255;255'
+    return
+  fi
+  printf '%d;%d;%d' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+}
+
+DOT="●"
+CLEAR_WIDTH=4
 COLS=$(tput cols </dev/tty)
 ROWS=$(tput lines </dev/tty)
 
@@ -49,12 +64,12 @@ esac
 
 case "$OVERLAY_COL" in
   left)  COL=0 ;;
-  *)     COL=$(( COLS - MSG_LEN )) ;;
+  *)     COL=$(( COLS - CLEAR_WIDTH )) ;;
 esac
 
 {
   tput sc
   tput cup "$ROW" "$COL"
-  printf '%s' "$MSG"
+  printf '\033[38;2;%sm%s\033[0m   ' "$(hex_to_rgb "$COLOR")" "$DOT"
   tput rc
 } >/dev/tty

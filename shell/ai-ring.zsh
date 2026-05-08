@@ -11,6 +11,8 @@
 
 # Internal state
 typeset -g _ai_ring_active=""
+typeset -g _ai_ring_active_agent=""
+typeset -g _ai_ring_script_dir="${${(%):-%N}:A:h}"
 
 __ai_ring_set_user_var() {
   local encoded
@@ -22,13 +24,26 @@ __ai_ring_set_user_var() {
   fi
 }
 
+__ai_ring_set_state() {
+  local status="$1"
+  local agent="${2:-agent}"
+  local state_hook="$_ai_ring_script_dir/cc-glow-state.sh"
+
+  if [[ -x "$state_hook" && -n "${WEZTERM_PANE:-}" ]]; then
+    "$state_hook" "$status" "$agent"
+  else
+    __ai_ring_set_user_var "AI_RING" "$status"
+  fi
+}
+
 __ai_ring_preexec() {
   local cmd="${1%% *}"
   cmd="${cmd##*/}"
   for agent in "${AI_RING_AGENTS[@]}"; do
     if [[ "$cmd" == "$agent" ]]; then
       _ai_ring_active=1
-      __ai_ring_set_user_var "AI_RING" "running"
+      _ai_ring_active_agent="$agent"
+      __ai_ring_set_state "running" "$agent"
       return
     fi
   done
@@ -37,7 +52,8 @@ __ai_ring_preexec() {
 __ai_ring_precmd() {
   if [[ -n "$_ai_ring_active" ]]; then
     _ai_ring_active=""
-    __ai_ring_set_user_var "AI_RING" "done"
+    __ai_ring_set_state "done" "${_ai_ring_active_agent:-agent}"
+    _ai_ring_active_agent=""
   fi
 }
 
